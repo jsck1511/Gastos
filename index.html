@@ -12,37 +12,51 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>Gastos</title>
 <style>
-:root{--bg:#f5f6f8;--card:#fff;--tx:#14171a;--mut:#6b7280;--ac:#1877f2;--ok:#16a34a;--bd:#e3e6ea}
+:root{--bg:#f5f6f8;--card:#fff;--tx:#14171a;--mut:#6b7280;--ac:#1877f2;--ok:#16a34a;--bad:#dc2626;--bd:#e3e6ea}
 @media(prefers-color-scheme:dark){:root{--bg:#0f1114;--card:#1a1d22;--tx:#eceff3;--mut:#9aa3ae;--bd:#2a2f36}}
+body.rein{--ac:#16a34a}
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--tx);font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif}
 main{max-width:480px;margin:0 auto;padding:calc(env(safe-area-inset-top,0px) + 16px) 16px calc(env(safe-area-inset-bottom,0px) + 24px)}
 header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px}
 h1{margin:0;font-size:26px}
+h2{margin:0 0 12px;font-size:20px}
 #estado{font-size:13px;color:var(--mut)}
+.seg{display:flex;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:3px;margin-bottom:12px}
+.seg button{flex:1;border:0;background:none;color:var(--tx);font-size:16px;padding:10px;border-radius:9px}
+.seg button.on{background:var(--ac);color:#fff;font-weight:600}
 #cats{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
 .cat{border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:999px;padding:9px 14px;font-size:15px}
 .cat.on{background:var(--ac);border-color:var(--ac);color:#fff}
-input{width:100%;font-size:17px;padding:14px;border-radius:12px;border:1px solid var(--bd);background:var(--card);color:var(--tx);margin-bottom:10px}
-button.main{width:100%;font-size:18px;font-weight:600;padding:15px;border:0;border-radius:12px;background:var(--ac);color:#fff}
+input,select{width:100%;font-size:17px;padding:14px;border-radius:12px;border:1px solid var(--bd);background:var(--card);color:var(--tx);margin-bottom:10px}
+button.main{width:100%;font-size:18px;font-weight:600;padding:15px;border:0;border-radius:12px;background:var(--ac);color:#fff;margin-bottom:8px}
+button.danger{background:var(--bad)}
+button.ghost{background:var(--card);color:var(--tx);border:1px solid var(--bd)}
 ul{list-style:none;padding:0;margin:20px 0}
 li{display:flex;justify-content:space-between;gap:10px;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px 14px;margin-bottom:8px}
 li small{display:block;color:var(--mut);margin-top:2px}
 li b{white-space:nowrap}
 .ok{color:var(--ok)}
+.in{color:var(--ok)}
+.hint{font-size:13px;color:var(--mut);text-align:center;margin:-8px 0 8px}
 details{margin-top:10px;color:var(--mut)}
 summary{padding:8px 0}
 details input{margin-top:6px}
+#ov{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;justify-content:center;z-index:10}
+#ov[hidden]{display:none}
+.sheet{width:100%;max-width:480px;background:var(--bg);border-radius:20px 20px 0 0;padding:20px 16px calc(env(safe-area-inset-bottom,0px) + 16px)}
 </style>
 </head>
 <body>
 <main>
   <header><h1>Gastos</h1><span id="estado"></span></header>
+  <div class="seg" id="tipo"><button data-t="Gasto" class="on">Gasto</button><button data-t="Reintegro">Reintegro (me devolvieron)</button></div>
   <div id="cats"></div>
   <input id="concepto" placeholder="Qué compraste (ej: zapatillas adidas)" autocomplete="off">
   <input id="monto" inputmode="decimal" placeholder="Monto">
   <button class="main" id="guardar">Guardar</button>
   <ul id="lista"></ul>
+  <div class="hint">Tocá un movimiento para editarlo o eliminarlo</div>
   <details id="cfg">
     <summary>⚙ Configuración</summary>
     <input id="url" placeholder="URL de Apps Script (termina en /exec)" autocapitalize="off" autocorrect="off">
@@ -50,13 +64,32 @@ details input{margin-top:6px}
     <button class="main" id="sg">Guardar configuración</button>
   </details>
 </main>
+
+<div id="ov" hidden>
+  <div class="sheet">
+    <h2>Editar movimiento</h2>
+    <select id="et"><option>Gasto</option><option>Reintegro</option></select>
+    <input id="ec" placeholder="Concepto" autocomplete="off">
+    <input id="em" inputmode="decimal" placeholder="Monto">
+    <select id="ecat"></select>
+    <button class="main" id="eg">Guardar cambios</button>
+    <button class="main danger" id="ed">Eliminar</button>
+    <button class="main ghost" id="ex">Cancelar</button>
+  </div>
+</div>
+
 <script>
 const CATS=['Auto','Comida','Transporte','Salud','Ocio','Estudio','Hogar','Ropa','Otros'];
 const $=s=>document.querySelector(s);
 const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}};
-let queue=load('queue',[]), hist=load('hist',[]), cfg=load('cfg',{url:'',token:''}), cat='Auto', syncing=false;
-const persist=()=>{localStorage.setItem('queue',JSON.stringify(queue));localStorage.setItem('hist',JSON.stringify(hist));localStorage.setItem('cfg',JSON.stringify(cfg))};
+const qk=q=>q.qid||q.id;
+const isAdd=q=>(q.op||'add')==='add';
+const fmt=n=>'$'+Number(n).toLocaleString('es-AR');
+const pend=id=>queue.some(q=>q.id===id);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+let queue=load('queue',[]), hist=load('hist',[]), cfg=load('cfg',{url:'',token:''});
+let cat='Auto', tipo='Gasto', syncing=false, editing=null;
+const persist=()=>{localStorage.setItem('queue',JSON.stringify(queue));localStorage.setItem('hist',JSON.stringify(hist));localStorage.setItem('cfg',JSON.stringify(cfg))};
 
 function renderCats(){
   $('#cats').replaceChildren(...CATS.map(c=>{
@@ -66,39 +99,93 @@ function renderCats(){
     return b;
   }));
 }
+function setTipo(t){
+  tipo=t;
+  document.querySelectorAll('#tipo button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+  document.body.classList.toggle('rein',t==='Reintegro');
+  $('#guardar').textContent=t==='Reintegro'?'Guardar reintegro':'Guardar';
+  $('#concepto').placeholder=t==='Reintegro'?'De qué te devolvieron (ej: cena juan)':'Qué compraste (ej: zapatillas adidas)';
+}
 function render(){
   $('#lista').replaceChildren(...hist.slice(0,20).map(h=>{
+    const rein=h.tipo==='Reintegro';
     const li=document.createElement('li');
+    li.onclick=()=>openEdit(h.id);
     const l=document.createElement('div');
     l.textContent=h.concepto||h.texto||'';
     const s=document.createElement('small');
-    s.textContent=(h.categoria||'Auto')+' · '+new Date(h.fecha).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+' · '+(h.sync?'✓ subido':'⏳ pendiente');
-    if(h.sync) s.className='ok';
+    const ok=!pend(h.id);
+    s.textContent=(rein?'Reintegro · ':'')+(h.categoria||'Auto')+' · '+new Date(h.fecha).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+' · '+(ok?'✓ subido':'⏳ pendiente');
+    if(ok) s.className='ok';
     l.appendChild(s);
     const r=document.createElement('b');
-    r.textContent=h.monto!==undefined&&h.monto!==''?'$'+Number(h.monto).toLocaleString('es-AR'):'';
+    if(h.monto!==undefined&&h.monto!=='') r.textContent=(rein?'+':'')+fmt(h.monto);
+    if(rein) r.className='in';
     li.append(l,r); return li;
   }));
   const n=queue.length;
   $('#estado').textContent=!navigator.onLine?('Sin conexión'+(n?` · ${n} pendientes`:'')):(n?`⏳ ${n} pendientes`:'✓ al día');
 }
+
 function add(){
   const c=$('#concepto').value.trim(), mTxt=$('#monto').value.trim();
   if(!c&&!mTxt) return;
-  const g={id:uid(),fecha:new Date().toISOString(),origen:'app'};
+  const g={op:'add',id:uid(),fecha:new Date().toISOString(),origen:'app',tipo};
+  g.qid=g.id;
   if(mTxt){
     const m=parseFloat(mTxt.replace(',','.'));
     if(isNaN(m)){alert('Monto inválido');return}
-    g.monto=m; g.concepto=c||(cat!=='Auto'?cat:'Sin concepto');
-    if(cat!=='Auto') g.categoria=cat;
-  } else {
-    g.texto=c;               // "zapatillas adidas 5000" -> lo parsea el servidor
-    if(cat!=='Auto') g.categoria=cat;
-  }
-  queue.push(g); hist.unshift({...g,sync:false}); hist=hist.slice(0,50);
+    g.monto=Math.abs(m); g.concepto=c||(cat!=='Auto'?cat:'Sin concepto');
+  } else g.texto=c;          // "zapatillas adidas 5000" -> lo parsea el servidor
+  if(cat!=='Auto') g.categoria=cat;
+  queue.push(g);
+  hist.unshift({id:g.id,fecha:g.fecha,origen:'app',tipo,concepto:g.concepto||g.texto,monto:g.monto,categoria:g.categoria});
+  hist=hist.slice(0,50);
   $('#concepto').value=''; $('#monto').value='';
   persist(); render(); sync();
 }
+
+/* ---- editar / eliminar ---- */
+function openEdit(id){
+  const h=hist.find(x=>x.id===id); if(!h) return;
+  editing=id;
+  $('#et').value=h.tipo||'Gasto';
+  $('#ec').value=h.concepto||h.texto||'';
+  $('#em').value=h.monto!==undefined&&h.monto!==''?h.monto:'';
+  $('#ecat').value=h.categoria||'Auto';
+  $('#ov').hidden=false;
+}
+function closeEdit(){editing=null;$('#ov').hidden=true}
+function saveEdit(){
+  const h=hist.find(x=>x.id===editing); if(!h){closeEdit();return}
+  const m=parseFloat(String($('#em').value).replace(',','.'));
+  if(isNaN(m)){alert('Monto inválido');return}
+  const concepto=$('#ec').value.trim()||'Sin concepto';
+  const sel=$('#ecat').value;
+  // si cambiaste el concepto y dejaste la categoría como estaba, se vuelve a detectar sola
+  const categoria=(sel==='Auto'||(concepto!==h.concepto&&sel===(h.categoria||'Auto')))?undefined:sel;
+  const nuevo={concepto,monto:Math.abs(m),tipo:$('#et').value,categoria};
+  const q=queue.find(x=>isAdd(x)&&x.id===editing);
+  if(q&&!syncing){            // todavía no subió: se corrige el pendiente
+    Object.assign(q,nuevo); delete q.texto;
+    if(categoria===undefined) delete q.categoria;
+  } else {
+    queue.push({op:'edit',qid:uid(),id:h.id,fecha:h.fecha,origen:h.origen||'app',...nuevo});
+  }
+  Object.assign(h,nuevo);
+  closeEdit(); persist(); render(); sync();
+}
+function delEdit(){
+  const id=editing; if(!id) return;
+  if(!confirm('¿Eliminar este movimiento?')) return;
+  const q=queue.find(x=>isAdd(x)&&x.id===id);
+  if(q&&!syncing) queue=queue.filter(x=>x.id!==id);   // nunca llegó al Sheet: no deja rastro
+  else queue.push({op:'del',qid:uid(),id});            // ya está en el Sheet: se borra la fila al sincronizar
+  hist=hist.filter(x=>x.id!==id);
+  closeEdit(); persist(); render(); sync();
+}
+
+/* ---- sincronización ---- */
 async function sync(){
   if(syncing||!queue.length||!cfg.url||!navigator.onLine) return;
   syncing=true;
@@ -107,15 +194,23 @@ async function sync(){
     const r=await fetch(cfg.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token:cfg.token,gastos:batch})});
     const j=await r.json();
     if(j.ok){
-      const ids=new Set(batch.map(x=>x.id));
-      queue=queue.filter(x=>!ids.has(x.id));
-      const byId=Object.fromEntries((j.res||[]).map(x=>[x.id,x]));
-      hist.forEach(h=>{if(ids.has(h.id)){h.sync=true;const x=byId[h.id];if(x){h.categoria=x.categoria;h.concepto=x.concepto;h.monto=x.monto}}});
+      const done=new Set(batch.map(qk));
+      queue=queue.filter(x=>!done.has(qk(x)));
+      (j.res||[]).forEach(x=>{
+        if(x.op==='del') return;
+        const h=hist.find(y=>y.id===x.id);
+        if(h&&!pend(x.id)){h.categoria=x.categoria;h.concepto=x.concepto;h.monto=x.monto;h.tipo=x.tipo}
+      });
     }
   }catch(e){}
   syncing=false; persist(); render();
 }
+
+document.querySelectorAll('#tipo button').forEach(b=>b.onclick=()=>setTipo(b.dataset.t));
+$('#ecat').replaceChildren(...CATS.map(c=>{const o=document.createElement('option');o.textContent=c;return o}));
 $('#guardar').onclick=add;
+$('#eg').onclick=saveEdit; $('#ed').onclick=delEdit; $('#ex').onclick=closeEdit;
+$('#ov').addEventListener('click',e=>{if(e.target.id==='ov')closeEdit()});
 $('#concepto').addEventListener('keydown',e=>{if(e.key==='Enter')$('#monto').focus()});
 $('#monto').addEventListener('keydown',e=>{if(e.key==='Enter')add()});
 $('#sg').onclick=()=>{cfg={url:$('#url').value.trim(),token:$('#token').value.trim()};persist();$('#cfg').open=false;sync()};
